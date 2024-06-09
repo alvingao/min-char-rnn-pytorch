@@ -16,7 +16,7 @@ class TextDataset(torch.utils.data.Dataset):
         with open(filename, "r", encoding="utf-8") as f:
             self.text = f.read()
 
-        self.chars = list(set(self.text))
+        self.chars = sorted(list(set(self.text)))
         self.vocab_size = len(self.chars)
         self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
         self.idx_to_char = dict(enumerate(self.chars))
