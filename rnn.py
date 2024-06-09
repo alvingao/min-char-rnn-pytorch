@@ -9,6 +9,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from config import FILENAME, CHECKPOINT_DIR, LOG_DIR
 from dataset import TextDataset
 
 
@@ -139,7 +140,7 @@ def train(
                 print("---------------")
 
         print(f"Epoch: {0} finished. Saving model weights.")
-        save_model_weights(model, f"rnn_epoch_{epoch}.pth")
+        save_model_weights(model, f"{CHECKPOINT_DIR}/rnn_epoch_{epoch}.pth")
 
 
 def setup_device():
@@ -164,7 +165,7 @@ def main():
     """
     device = setup_device()
 
-    dataset = TextDataset("data/sherlock.txt")
+    dataset = TextDataset(FILENAME)
     dataloader = DataLoader(
         dataset, batch_size=64, shuffle=True, generator=torch.Generator(device=device)
     )
@@ -174,11 +175,11 @@ def main():
     loss_fn = nn.NLLLoss()
     optimizer = optim.Adam(rnn.parameters(), lr=1e-3)
 
-    writer = SummaryWriter("runs/min-char-rnn")
+    writer = SummaryWriter(LOG_DIR)
 
     train(dataloader, rnn, loss_fn, optimizer, writer)
 
-    save_model_weights(rnn, "rnn_final.pth")
+    save_model_weights(rnn, f"{CHECKPOINT_DIR}/rnn_final.pth")
 
 
 def test():
@@ -187,9 +188,9 @@ def test():
     """
     setup_device()
 
-    dataset = TextDataset("data/sherlock.txt")
+    dataset = TextDataset(FILENAME)
     rnn = RNN(dataset.vocab_size, 128, dataset.vocab_size)
-    load_model_weights(rnn, "rnn_final.pth")
+    load_model_weights(rnn, f"{CHECKPOINT_DIR}/rnn_final.pth")
 
     seed = torch.tensor(dataset.char_to_idx["A"])
     text = generate_text(rnn, dataset, seed, 1000)
