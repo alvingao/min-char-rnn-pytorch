@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 from torch import nn, optim, Tensor
 from torch.distributions import Categorical
@@ -9,8 +11,8 @@ from config import FILENAME, CHECKPOINT_DIR, LOG_DIR
 from dataset import TextDataset
 
 
-class LSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+class LSTMCell(nn.Module):
+    def __init__(self, input_size, hidden_size):
         super().__init__()
 
         self.input_size = input_size
@@ -20,14 +22,12 @@ class LSTM(nn.Module):
         self.i = nn.Linear(input_size + hidden_size, hidden_size)
         self.c = nn.Linear(input_size + hidden_size, hidden_size)
         self.o = nn.Linear(input_size + hidden_size, hidden_size)
-        self.h2o = nn.Linear(hidden_size, output_size)
 
     def forward(self, x: Tensor, c: Tensor, h: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         xh = torch.cat([x, h], dim=1)
         c = c * F.sigmoid(self.f(xh)) + F.sigmoid(self.i(xh)) * F.tanh(self.c(xh))
         h = F.sigmoid(self.o(xh)) * F.tanh(c)
-        y = F.log_softmax(self.h2o(h), dim=-1)
-        return y, c.detach(), h.detach()
+        return h, c.detach(), h.detach()
 
     def init_hidden(self, batch_size: int = 1):
         """
@@ -38,14 +38,45 @@ class LSTM(nn.Module):
     init_cell = init_hidden
 
 
+class LSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, num_layers: int = 1):
+        super().__init__()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+
+        cells = [LSTMCell(hidden_size, hidden_size) for _ in range(1, num_layers)]
+        cells.insert(0, LSTMCell(input_size, hidden_size))
+        self.cells = nn.ModuleList(cells)
+
+        self.h2o = nn.Linear(hidden_size, output_size)
+
+    def forward(
+        self, x: Tensor, state: tuple[List[Tensor], List[Tensor]]
+    ) -> tuple[Tensor, tuple[List[Tensor], List[Tensor]]]:
+        if state is None:
+            batch_size = x.size(0)
+            c = [cell.init_cell(batch_size) for cell in self.cells]
+            h = [cell.init_hidden(batch_size) for cell in self.cells]
+        else:
+            (c, h) = state
+
+        for idx, cell in enumerate(self.cells):
+            x, c[idx], h[idx] = cell(x, c[idx], h[idx])
+
+        y = self.h2o(x)
+        y = F.log_softmax(y, dim=-1)
+
+        return y, (c, h)
+
+
 def generate_text(lstm: LSTM, dataset: TextDataset, seed: torch.Tensor, n: int) -> str:
     """
     Generate text output using the model.
     """
     with torch.no_grad():
         # When generating text sequence, batch size is always 1
-        hidden = lstm.init_hidden(1)
-        cell = lstm.init_cell(1)
+        state = None
 
         indices = []
         idx = seed
@@ -55,7 +86,7 @@ def generate_text(lstm: LSTM, dataset: TextDataset, seed: torch.Tensor, n: int) 
             input = F.one_hot(idx, num_classes=dataset.vocab_size).float()
             input = input.unsqueeze(0)
 
-            output, cell, hidden = lstm(input, cell, hidden)
+            output, state = lstm(input, state)
 
             # Construct categorical distribution and sample a (random) character
             dist = Categorical(logits=output)
@@ -97,16 +128,14 @@ def train(
             batch_targets = batch_targets.transpose(0, 1).long()
 
             seq_length = batch_inputs.size(0)
-            batch_size = batch_inputs.size(1)
 
-            hidden = model.init_hidden(batch_size)
-            cell = model.init_cell(batch_size)
+            state = None
 
             optimizer.zero_grad()
             loss = 0
 
             for idx in range(seq_length):
-                output, cell, hidden = model(batch_inputs[idx], cell, hidden)
+                output, state = model(batch_inputs[idx], state)
                 loss += loss_fn(output, batch_targets[idx])
 
             loss.backward()
@@ -160,19 +189,20 @@ def main():
     """
     device = setup_device()
 
-    dataset = TextDataset(FILENAME)
+    dataset = TextDataset(FILENAME, seq_length=50)
     dataloader = DataLoader(
-        dataset, batch_size=256, shuffle=True, generator=torch.Generator(device=device)
+        dataset, batch_size=128, shuffle=True, generator=torch.Generator(device=device)
     )
 
-    lstm = LSTM(dataset.vocab_size, 128, dataset.vocab_size)
+    lstm = LSTM(dataset.vocab_size, 128, dataset.vocab_size, num_layers=2)
+    nn.LSTM
 
     loss_fn = nn.NLLLoss()
-    optimizer = optim.Adam(lstm.parameters(), lr=1e-3)
+    optimizer = optim.Adam(lstm.parameters(), lr=2e-3)
 
     writer = SummaryWriter(LOG_DIR)
 
-    train(dataloader, lstm, loss_fn, optimizer, writer, num_epochs=10)
+    train(dataloader, lstm, loss_fn, optimizer, writer, num_epochs=50)
 
     save_model_weights(lstm, f"{CHECKPOINT_DIR}/lstm_final.pth")
 
@@ -183,11 +213,11 @@ def test():
     """
     setup_device()
 
-    dataset = TextDataset(FILENAME)
-    rnn = LSTM(dataset.vocab_size, 128, dataset.vocab_size)
+    dataset = TextDataset(FILENAME, seq_length=50)
+    rnn = LSTM(dataset.vocab_size, 128, dataset.vocab_size, num_layers=2)
     load_model_weights(rnn, f"{CHECKPOINT_DIR}/lstm_final.pth")
 
-    seed = torch.tensor(dataset.char_to_idx["A"])
+    seed = torch.tensor(dataset.char_to_idx["f"])
     text = generate_text(rnn, dataset, seed, 1000)
     print(text)
 
