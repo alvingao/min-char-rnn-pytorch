@@ -117,7 +117,7 @@ def train(
                 print(text)
                 print("---------------")
 
-        print(f"Epoch: {0} finished. Saving model weights.")
+        print(f"Epoch: {epoch} finished. Saving model weights.")
         save_model_weights(model, f"{CHECKPOINT_DIR}/lstm_epoch_{epoch}.pth")
 
 
