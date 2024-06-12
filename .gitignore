@@ -164,3 +164,4 @@ cython_debug/
 # Project specific folders
 runs/
 data/
+model_weights/
